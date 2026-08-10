@@ -1,0 +1,21 @@
+# my_play 播放网关(M1)
+server:
+  address: ":8006"
+
+logger:
+  level: "all"
+  stdout: true
+
+# 与 my_media 同一套 MinIO(只读)
+minio:
+  endpoint: "127.0.0.1:19000"   # Docker 内跑时改 minio:9000, 但注意 ts 302 预签名的 host 需浏览器可达
+  access_key: "minioadmin"
+  secret_key: "minioadmin123"
+  bucket: "my-media"
+  use_ssl: false
+
+play:
+  # 必须与 my_media 的 play_gateway.secret 一致
+  secret: "dev-play-secret-change-me"
+  # ts 预签名有效期(秒)
+  presign_expire_sec: 300
