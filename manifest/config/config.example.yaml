@@ -21,9 +21,15 @@ play:
   secret_secondary: ""
   # ts 预签名有效期(秒)
   presign_expire_sec: 300
+  # 分片回源模式: presign(默认,302预签名) | proxy(网关代理直出,隐藏源站) | cdn(302到CDN签名URL)
+  serve_mode: "presign"
+  cdn:
+    base_url: ""       # 形如 https://cdn.example.com (serve_mode=cdn 时必填)
+    private_key: ""    # 阿里云 URL 鉴权 Type A 的鉴权 KEY
 
 # 策略同步与统计上报的 my_media 地址(X-Play-Token 用 play.secret)
 media:
   base_url: "http://127.0.0.1:8004"
   sync_interval_sec: 60
   report_interval_sec: 30
+  revoke_sync_interval_sec: 15   # 链接失效闸同步间隔(秒), 越小越快生效

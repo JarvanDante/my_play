@@ -3,15 +3,19 @@ package play
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"my_play/internal/shared/cdn"
 	"my_play/internal/shared/policy"
+	"my_play/internal/shared/revoke"
 	"my_play/internal/shared/stats"
 	"my_play/internal/shared/store"
 	"my_play/internal/shared/token"
@@ -19,6 +23,24 @@ import (
 
 // 允许的文件名: 字母数字._- ,防路径穿越。
 var fileRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// validRelPath 允许 <file> 或 <dir>/<file>(一级子目录, 多码率档位 720p/480p),
+// 每段仅字母数字._- ; 拒绝 .. 与多级目录, 防路径穿越。
+func validRelPath(p string) bool {
+	if p == "" || strings.Contains(p, "..") {
+		return false
+	}
+	parts := strings.Split(p, "/")
+	if len(parts) < 1 || len(parts) > 2 {
+		return false
+	}
+	for _, seg := range parts {
+		if seg == "" || !fileRe.MatchString(seg) {
+			return false
+		}
+	}
+	return true
+}
 
 func secrets(r *ghttp.Request) []string {
 	ctx := r.Context()
@@ -37,14 +59,15 @@ func Healthz(r *ghttp.Request) {
 func Hls(r *ghttp.Request) {
 	ctx := r.Context()
 	code := r.Get("code").String()
-	file := r.Get("file").String()
+	file := strings.TrimLeft(r.Get("file").String(), "/")
 	e := r.Get("e").Int64()
 	site := r.Get("s").String()
 	sig := r.Get("sig").String()
 	d := r.Get("d").Int()
 	ip := r.Get("i").String()
+	iat := r.Get("t").Int64()
 
-	if code == "" || !fileRe.MatchString(file) || strings.Contains(file, "..") {
+	if code == "" || !validRelPath(file) {
 		r.Response.WriteStatus(http.StatusBadRequest, "bad request")
 		return
 	}
@@ -53,13 +76,18 @@ func Hls(r *ghttp.Request) {
 		r.Response.WriteStatus(http.StatusInternalServerError, "play.secret 未配置")
 		return
 	}
-	if err := token.Verify(secs, code, site, e, d, ip, sig); err != nil {
+	if err := token.Verify(secs, code, site, e, d, ip, iat, sig); err != nil {
 		r.Response.WriteStatus(http.StatusForbidden, err.Error())
 		return
 	}
 	// IP 绑定(token 内嵌了 ip 才校验)
 	if ip != "" && r.GetClientIp() != ip {
 		r.Response.WriteStatus(http.StatusForbidden, "播放凭证与来源不符")
+		return
+	}
+	// 链接一键失效闸: 令牌签发时间早于失效基线即拒
+	if revoke.Revoked(site, code, iat) {
+		r.Response.WriteStatus(http.StatusForbidden, "链接已失效")
 		return
 	}
 	// 站点防盗链策略
@@ -89,30 +117,71 @@ func Hls(r *ghttp.Request) {
 			r.Response.WriteStatus(http.StatusNotFound, "playlist not found")
 			return
 		}
-		q := fmt.Sprintf("e=%d&s=%s&sig=%s", e, site, sig)
+		q := fmt.Sprintf("e=%d&s=%s&t=%d&sig=%s", e, site, iat, sig)
 		if d > 0 {
 			q += fmt.Sprintf("&d=%d", d)
 		}
 		if ip != "" {
 			q += "&i=" + ip
 		}
-		stats.AddPlay(site, code)
+		// 仅顶层清单(master.m3u8/旧 index.m3u8)计一次播放; 多码率子清单(720p/index.m3u8)不重复计数
+		if !strings.Contains(file, "/") {
+			stats.AddPlay(site, code)
+		}
 		r.Response.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		r.Response.Header().Set("Cache-Control", "no-store")
 		r.Response.Write(rewriteM3u8(string(raw), q, d))
 		return
 	}
 
-	// 分片: 302 到预签名
-	u, err := m.PresignGet(ctx, key)
-	if err != nil {
-		g.Log().Warningf(ctx, "presign %s: %v", key, err)
-		r.Response.WriteStatus(http.StatusNotFound, "segment not found")
-		return
-	}
+	// 分片回源: 按 serve_mode 选择 presign(302预签名) / proxy(代理直出) / cdn(302到CDN签名URL)
 	stats.AddSeg(site, code)
 	r.Response.Header().Set("Cache-Control", "no-store")
-	r.Response.RedirectTo(u, http.StatusFound)
+
+	switch strings.ToLower(g.Cfg().MustGet(ctx, "play.serve_mode", "presign").String()) {
+	case "proxy":
+		obj, info, err := m.StreamGet(ctx, key)
+		if err != nil {
+			g.Log().Warningf(ctx, "proxy get %s: %v", key, err)
+			r.Response.WriteStatus(http.StatusNotFound, "segment not found")
+			return
+		}
+		defer obj.Close()
+		data, err := io.ReadAll(obj)
+		if err != nil {
+			g.Log().Warningf(ctx, "proxy read %s: %v", key, err)
+			r.Response.WriteStatus(http.StatusBadGateway, "segment read failed")
+			return
+		}
+		ct := info.ContentType
+		if ct == "" {
+			ct = "video/mp2t"
+		}
+		r.Response.Header().Set("Content-Type", ct)
+		r.Response.Write(data)
+		return
+
+	case "cdn":
+		base := strings.TrimRight(g.Cfg().MustGet(ctx, "play.cdn.base_url", "").String(), "/")
+		pkey := g.Cfg().MustGet(ctx, "play.cdn.private_key", "").String()
+		if base != "" && pkey != "" {
+			uri := "/" + strings.TrimLeft(key, "/")
+			u := cdn.SignTypeA(base, uri, time.Now().Unix(), pkey)
+			r.Response.RedirectTo(u, http.StatusFound)
+			return
+		}
+		g.Log().Warning(ctx, "serve_mode=cdn 但 play.cdn.base_url/private_key 未配置, 回退 presign")
+		fallthrough
+
+	default: // presign
+		u, err := m.PresignGet(ctx, key)
+		if err != nil {
+			g.Log().Warningf(ctx, "presign %s: %v", key, err)
+			r.Response.WriteStatus(http.StatusNotFound, "segment not found")
+			return
+		}
+		r.Response.RedirectTo(u, http.StatusFound)
+	}
 }
 
 // rewriteM3u8 给每个 URI 行追加 token; previewSec>0 时按 EXTINF 累计时长截断(试看)。

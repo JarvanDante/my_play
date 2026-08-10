@@ -1,0 +1,35 @@
+# Docker 容器内配置(mydocker / jarven 网络)
+# MinIO 预签名给浏览器用: endpoint 走宿主机映射端口, 避免签出 minio:9000
+
+server:
+  address: ":8006"
+
+logger:
+  level: "all"
+  stdout: true
+
+# 与 my_media 同一套 MinIO(只读)。presign 模式下签名 Host 必须浏览器可达
+minio:
+  endpoint: "host.docker.internal:19000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin123"
+  bucket: "my-media"
+  use_ssl: false
+
+play:
+  # 必须与 my_media 的 play_gateway.secret 一致
+  secret: "dev-play-secret-change-me"
+  secret_secondary: ""
+  presign_expire_sec: 300
+  # 分片回源模式: presign(默认,302预签名) | proxy(网关代理直出,隐藏源站) | cdn(302到CDN签名URL)
+  serve_mode: "presign"
+  cdn:
+    base_url: ""
+    private_key: ""
+
+# 策略/失效闸同步与统计上报: 走 docker 内网直连 my_media
+media:
+  base_url: "http://my_media:8004"
+  sync_interval_sec: 60
+  report_interval_sec: 30
+  revoke_sync_interval_sec: 15

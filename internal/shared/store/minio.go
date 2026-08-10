@@ -69,3 +69,17 @@ func (m *Minio) PresignGet(ctx context.Context, key string) (string, error) {
 	}
 	return u.String(), nil
 }
+
+// StreamGet 直接读取对象(代理直出用): 返回对象读取器与元信息, 调用方负责 Close。
+func (m *Minio) StreamGet(ctx context.Context, key string) (*miniogo.Object, miniogo.ObjectInfo, error) {
+	o, err := m.client.GetObject(ctx, m.bucket, key, miniogo.GetObjectOptions{})
+	if err != nil {
+		return nil, miniogo.ObjectInfo{}, err
+	}
+	info, err := o.Stat()
+	if err != nil {
+		_ = o.Close()
+		return nil, miniogo.ObjectInfo{}, err
+	}
+	return o, info, nil
+}

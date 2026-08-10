@@ -10,6 +10,7 @@ import (
 
 	"my_play/internal/controller/play"
 	"my_play/internal/shared/policy"
+	"my_play/internal/shared/revoke"
 	"my_play/internal/shared/stats"
 )
 
@@ -25,12 +26,13 @@ var Main = gcmd.Command{
 	Brief: "my_play 播放网关(HLS 验签/防盗链/试看/统计)",
 	Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
 		policy.StartSync(ctx)
+		revoke.StartSync(ctx)
 		stats.StartReporter(ctx)
 
 		s := g.Server()
 		s.Use(cors)
 		s.BindHandler("GET:/healthz", play.Healthz)
-		s.BindHandler("GET:/hls/:code/:file", play.Hls)
+		s.BindHandler("GET:/hls/:code/*file", play.Hls)
 		s.Run()
 		return nil
 	},
