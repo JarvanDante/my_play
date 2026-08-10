@@ -1,2 +1,4 @@
-# my_play
-播放服务
+# GoFrame Template For SingleRepo
+
+Quick Start: 
+- https://goframe.org/quick
