@@ -10,12 +10,20 @@ logger:
 minio:
   endpoint: "127.0.0.1:19000"   # Docker 内跑时改 minio:9000, 但注意 ts 302 预签名的 host 需浏览器可达
   access_key: "minioadmin"
-  secret_key: "minioadmin"
+  secret_key: "minioadmin123"
   bucket: "my-media"
   use_ssl: false
 
 play:
   # 必须与 my_media 的 play_gateway.secret 一致
   secret: "dev-play-secret-change-me"
+  # 密钥轮换: 换新时旧密钥放这里, 过渡期后清空
+  secret_secondary: ""
   # ts 预签名有效期(秒)
   presign_expire_sec: 300
+
+# 策略同步与统计上报的 my_media 地址(X-Play-Token 用 play.secret)
+media:
+  base_url: "http://127.0.0.1:8004"
+  sync_interval_sec: 60
+  report_interval_sec: 30

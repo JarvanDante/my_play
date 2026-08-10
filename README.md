@@ -31,6 +31,10 @@ curl http://127.0.0.1:8006/healthz
 联调:改 my_media 配置 `play_gateway.base_url/secret` → 重启 my_media → 打开总后台媒资详情,play_url 应变为
 `http://127.0.0.1:8006/hls/{code}/index.m3u8?e=...&s=admin&sig=...`,浏览器可直接播放。
 
+## 文档
+
+- [M1 的作用与边界](docs/why-m1.md)
+
 ## M2 规划
 
 Referer/UA/IP 防盗链策略(按站点)、播放统计上报、密钥轮换、试看、CDN 对接。
