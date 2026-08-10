@@ -1,3 +1,4 @@
+// Package cmd 播放网关启动装配。
 package cmd
 
 import (
@@ -7,24 +8,25 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/gcmd"
 
-	"my_play/internal/controller/hello"
+	"my_play/internal/controller/play"
 )
 
-var (
-	Main = gcmd.Command{
-		Name:  "main",
-		Usage: "main",
-		Brief: "start http server",
-		Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
-			s := g.Server()
-			s.Group("/", func(group *ghttp.RouterGroup) {
-				group.Middleware(ghttp.MiddlewareHandlerResponse)
-				group.Bind(
-					hello.NewV1(),
-				)
-			})
-			s.Run()
-			return nil
-		},
-	}
-)
+// CORS 播放器跨域(GET/HEAD 公共资源)。
+func cors(r *ghttp.Request) {
+	r.Response.CORSDefault()
+	r.Middleware.Next()
+}
+
+var Main = gcmd.Command{
+	Name:  "main",
+	Usage: "main",
+	Brief: "my_play 播放网关(HLS 验签/防盗链)",
+	Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
+		s := g.Server()
+		s.Use(cors)
+		s.BindHandler("GET:/healthz", play.Healthz)
+		s.BindHandler("GET:/hls/:code/:file", play.Hls)
+		s.Run()
+		return nil
+	},
+}
