@@ -23,17 +23,23 @@ var (
 	table = map[string]map[string]int64{} // site -> asset('*'|code) -> not_before
 )
 
-// NotBefore 返回站点/资产的失效基线(取站点级 '*' 与资产级的较大者)。无记录返回 0。
+// NotBefore 返回站点/资产的失效基线。取四类记录的最大值:
+// 本站整站(site/*)、本站资产(site/asset)、跨站整平台(*/*)、跨站资产(*/asset)。无记录返回 0。
 func NotBefore(site, asset string) int64 {
 	mu.RLock()
 	defer mu.RUnlock()
-	m := table[site]
-	if m == nil {
-		return 0
-	}
-	nb := m["*"]
-	if v, ok := m[asset]; ok && v > nb {
-		nb = v
+	var nb int64
+	for _, sc := range [2]string{site, "*"} {
+		m := table[sc]
+		if m == nil {
+			continue
+		}
+		if v := m["*"]; v > nb {
+			nb = v
+		}
+		if v, ok := m[asset]; ok && v > nb {
+			nb = v
+		}
 	}
 	return nb
 }
