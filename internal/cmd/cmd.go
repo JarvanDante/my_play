@@ -8,6 +8,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/gcmd"
 
+	"my_play/internal/boot"
 	"my_play/internal/controller/play"
 	"my_play/internal/shared/policy"
 	"my_play/internal/shared/revoke"
@@ -25,6 +26,7 @@ var Main = gcmd.Command{
 	Usage: "main",
 	Brief: "my_play 播放网关(HLS 验签/防盗链/试看/统计)",
 	Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
+		boot.InitNacosConfig(ctx)
 		policy.StartSync(ctx)
 		revoke.StartSync(ctx)
 		stats.StartReporter(ctx)
