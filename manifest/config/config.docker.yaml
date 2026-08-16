@@ -22,7 +22,8 @@ play:
   secret_secondary: ""
   presign_expire_sec: 300
   # 分片回源模式: presign(默认,302预签名) | proxy(网关代理直出,隐藏源站) | cdn(302到CDN签名URL)
-  serve_mode: "presign"
+  # 本地 Docker 预签名 Host 是 host.docker.internal, 浏览器 HLS 跟 302 会失败, 用网关代理直出
+  serve_mode: "proxy"
   cdn:
     base_url: ""
     private_key: ""

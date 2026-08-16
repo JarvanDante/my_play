@@ -136,26 +136,7 @@ func Hls(r *ghttp.Request) {
 
 	// 封面图走网关代理直出, 避免 302 到 host.docker.internal 预签名导致后台 <img> 破图。
 	if isImageFile(file) {
-		obj, info, err := m.StreamGet(ctx, key)
-		if err != nil {
-			g.Log().Warningf(ctx, "cover get %s: %v", key, err)
-			r.Response.WriteStatus(http.StatusNotFound, "cover not found")
-			return
-		}
-		defer obj.Close()
-		data, err := io.ReadAll(obj)
-		if err != nil {
-			g.Log().Warningf(ctx, "cover read %s: %v", key, err)
-			r.Response.WriteStatus(http.StatusBadGateway, "cover read failed")
-			return
-		}
-		ct := info.ContentType
-		if ct == "" {
-			ct = "image/jpeg"
-		}
-		r.Response.Header().Set("Content-Type", ct)
-		r.Response.Header().Set("Cache-Control", "private, max-age=120")
-		r.Response.Write(data)
+		proxyObject(r, m, key, "image/jpeg", "private, max-age=120")
 		return
 	}
 
@@ -165,25 +146,7 @@ func Hls(r *ghttp.Request) {
 
 	switch strings.ToLower(g.Cfg().MustGet(ctx, "play.serve_mode", "presign").String()) {
 	case "proxy":
-		obj, info, err := m.StreamGet(ctx, key)
-		if err != nil {
-			g.Log().Warningf(ctx, "proxy get %s: %v", key, err)
-			r.Response.WriteStatus(http.StatusNotFound, "segment not found")
-			return
-		}
-		defer obj.Close()
-		data, err := io.ReadAll(obj)
-		if err != nil {
-			g.Log().Warningf(ctx, "proxy read %s: %v", key, err)
-			r.Response.WriteStatus(http.StatusBadGateway, "segment read failed")
-			return
-		}
-		ct := info.ContentType
-		if ct == "" {
-			ct = "video/mp2t"
-		}
-		r.Response.Header().Set("Content-Type", ct)
-		r.Response.Write(data)
+		proxyObject(r, m, key, "video/mp2t", "")
 		return
 
 	case "cdn":
@@ -205,8 +168,45 @@ func Hls(r *ghttp.Request) {
 			r.Response.WriteStatus(http.StatusNotFound, "segment not found")
 			return
 		}
+		// 预签名 Host 是容器内地址时, 浏览器 HLS 跟 302 会失败, 回退网关代理。
+		if isBrowserUnreachable(u) {
+			proxyObject(r, m, key, "video/mp2t", "")
+			return
+		}
 		r.Response.RedirectTo(u, http.StatusFound)
 	}
+}
+
+func proxyObject(r *ghttp.Request, m *store.Minio, key, fallbackCT, cache string) {
+	ctx := r.Context()
+	obj, info, err := m.StreamGet(ctx, key)
+	if err != nil {
+		g.Log().Warningf(ctx, "proxy get %s: %v", key, err)
+		r.Response.WriteStatus(http.StatusNotFound, "object not found")
+		return
+	}
+	defer obj.Close()
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		g.Log().Warningf(ctx, "proxy read %s: %v", key, err)
+		r.Response.WriteStatus(http.StatusBadGateway, "object read failed")
+		return
+	}
+	ct := info.ContentType
+	if ct == "" {
+		ct = fallbackCT
+	}
+	r.Response.Header().Set("Content-Type", ct)
+	if cache != "" {
+		r.Response.Header().Set("Cache-Control", cache)
+	}
+	r.Response.Write(data)
+}
+
+func isBrowserUnreachable(u string) bool {
+	return strings.Contains(u, "host.docker.internal") ||
+		strings.Contains(u, "://minio:") ||
+		strings.Contains(u, "://minio.")
 }
 
 // rewriteM3u8 给每个 URI 行追加 token; previewSec>0 时按 EXTINF 累计时长截断(试看)。
