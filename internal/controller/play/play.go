@@ -134,6 +134,31 @@ func Hls(r *ghttp.Request) {
 		return
 	}
 
+	// 封面图走网关代理直出, 避免 302 到 host.docker.internal 预签名导致后台 <img> 破图。
+	if isImageFile(file) {
+		obj, info, err := m.StreamGet(ctx, key)
+		if err != nil {
+			g.Log().Warningf(ctx, "cover get %s: %v", key, err)
+			r.Response.WriteStatus(http.StatusNotFound, "cover not found")
+			return
+		}
+		defer obj.Close()
+		data, err := io.ReadAll(obj)
+		if err != nil {
+			g.Log().Warningf(ctx, "cover read %s: %v", key, err)
+			r.Response.WriteStatus(http.StatusBadGateway, "cover read failed")
+			return
+		}
+		ct := info.ContentType
+		if ct == "" {
+			ct = "image/jpeg"
+		}
+		r.Response.Header().Set("Content-Type", ct)
+		r.Response.Header().Set("Cache-Control", "private, max-age=120")
+		r.Response.Write(data)
+		return
+	}
+
 	// 分片回源: 按 serve_mode 选择 presign(302预签名) / proxy(代理直出) / cdn(302到CDN签名URL)
 	stats.AddSeg(site, code)
 	r.Response.Header().Set("Cache-Control", "no-store")
@@ -226,6 +251,13 @@ func rewriteM3u8(body, query string, previewSec int) string {
 		res = strings.TrimRight(res, "\n") + "\n#EXT-X-ENDLIST\n"
 	}
 	return res
+}
+
+func isImageFile(file string) bool {
+	low := strings.ToLower(file)
+	return strings.HasSuffix(low, ".jpg") || strings.HasSuffix(low, ".jpeg") ||
+		strings.HasSuffix(low, ".png") || strings.HasSuffix(low, ".webp") ||
+		strings.HasSuffix(low, ".gif")
 }
 
 func parseExtinf(line string) float64 {
