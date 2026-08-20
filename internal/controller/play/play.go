@@ -14,6 +14,7 @@ import (
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 
+	"my_play/internal/shared/aesbnc"
 	"my_play/internal/shared/cdn"
 	"my_play/internal/shared/policy"
 	"my_play/internal/shared/revoke"
@@ -135,20 +136,12 @@ func Hls(r *ghttp.Request) {
 		return
 	}
 
-	// 封面图走网关代理直出, 避免 302 到 host.docker.internal 预签名导致后台 <img> 破图。
-	// 视频 media/hls/{code}/cover.jpg，动漫 cartoon/hls/{code}/cover.jpg，漫画 comics/{code}/cover.jpg。
+	// 封面/页图走网关代理: .bnc 下发密文给 H5 解密; .jpg 给后台 <img> 明文预览。
+	// 视频 media/hls/{code}/cover.bnc，动漫 cartoon/hls/{code}/cover.bnc，漫画 comics/{code}/cover.bnc。
 	if isImageFile(file) {
-		keys := []string{
-			fmt.Sprintf("media/hls/%s/%s", code, file),
-			fmt.Sprintf("cartoon/hls/%s/%s", code, file),
-			fmt.Sprintf("comics/%s/%s", code, file),
+		if !serveImage(r, m, code, file) {
+			r.Response.WriteStatus(http.StatusNotFound, "object not found")
 		}
-		for _, k := range keys {
-			if proxyObject(r, m, k, "image/jpeg", "private, max-age=120") {
-				return
-			}
-		}
-		r.Response.WriteStatus(http.StatusNotFound, "object not found")
 		return
 	}
 
@@ -285,7 +278,82 @@ func isImageFile(file string) bool {
 	low := strings.ToLower(file)
 	return strings.HasSuffix(low, ".jpg") || strings.HasSuffix(low, ".jpeg") ||
 		strings.HasSuffix(low, ".png") || strings.HasSuffix(low, ".webp") ||
-		strings.HasSuffix(low, ".gif")
+		strings.HasSuffix(low, ".gif") || strings.HasSuffix(low, ".bnc") ||
+		strings.HasSuffix(low, ".ceb")
+}
+
+func imageCandidates(file string) []string {
+	out := []string{file}
+	ext := ""
+	if i := strings.LastIndex(file, "."); i >= 0 {
+		ext = strings.ToLower(file[i:])
+	}
+	stem := strings.TrimSuffix(file, ext)
+	if stem == "" {
+		return out
+	}
+	if aesbnc.IsEncryptedName(file) {
+		for _, e := range []string{".jpg", ".jpeg", ".png", ".webp", ".gif"} {
+			out = append(out, stem+e)
+		}
+	} else {
+		out = append(out, stem+".bnc", stem+".ceb")
+	}
+	return out
+}
+
+func serveImage(r *ghttp.Request, m *store.Minio, code, file string) bool {
+	ctx := r.Context()
+	wantCipher := aesbnc.IsEncryptedName(file)
+	prefixes := []string{
+		fmt.Sprintf("media/hls/%s/", code),
+		fmt.Sprintf("cartoon/hls/%s/", code),
+		fmt.Sprintf("comics/%s/", code),
+	}
+	for _, prefix := range prefixes {
+		for _, name := range imageCandidates(file) {
+			key := prefix + name
+			if !m.Exists(ctx, key) {
+				continue
+			}
+			raw, err := m.Fetch(ctx, key)
+			if err != nil || len(raw) == 0 {
+				continue
+			}
+			isCipherObj := aesbnc.IsEncryptedName(name) || !aesbnc.LooksLikeImage(raw)
+			if wantCipher {
+				out := raw
+				if !isCipherObj {
+					out, err = aesbnc.Encrypt(raw)
+					if err != nil {
+						g.Log().Warningf(ctx, "encrypt image %s: %v", key, err)
+						return false
+					}
+				}
+				r.Response.Header().Set("Content-Type", "application/octet-stream")
+				r.Response.Header().Set("Cache-Control", "private, max-age=120")
+				r.Response.Write(out)
+				return true
+			}
+			out := raw
+			if isCipherObj {
+				out, err = aesbnc.Decrypt(raw)
+				if err != nil {
+					g.Log().Warningf(ctx, "decrypt image %s: %v", key, err)
+					return false
+				}
+			}
+			ct := aesbnc.SniffContentType(out)
+			if ct == "application/octet-stream" {
+				ct = "image/jpeg"
+			}
+			r.Response.Header().Set("Content-Type", ct)
+			r.Response.Header().Set("Cache-Control", "private, max-age=120")
+			r.Response.Write(out)
+			return true
+		}
+	}
+	return false
 }
 
 func parseExtinf(line string) float64 {
