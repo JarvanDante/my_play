@@ -2,6 +2,7 @@
 package play
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -107,7 +108,7 @@ func Hls(r *ghttp.Request) {
 		r.Response.WriteStatus(http.StatusBadGateway, "storage unavailable")
 		return
 	}
-	key := fmt.Sprintf("media/hls/%s/%s", code, file)
+	key := resolveHlsKey(ctx, m, code, file)
 
 	// 播放清单: 拉取并重写(可试看截断)
 	if strings.HasSuffix(file, ".m3u8") {
@@ -135,9 +136,13 @@ func Hls(r *ghttp.Request) {
 	}
 
 	// 封面图走网关代理直出, 避免 302 到 host.docker.internal 预签名导致后台 <img> 破图。
-	// 视频封面在 media/hls/{code}/cover.jpg，漫画封面在 comics/{code}/cover.jpg。
+	// 视频 media/hls/{code}/cover.jpg，动漫 cartoon/hls/{code}/cover.jpg，漫画 comics/{code}/cover.jpg。
 	if isImageFile(file) {
-		keys := []string{key, fmt.Sprintf("comics/%s/%s", code, file)}
+		keys := []string{
+			fmt.Sprintf("media/hls/%s/%s", code, file),
+			fmt.Sprintf("cartoon/hls/%s/%s", code, file),
+			fmt.Sprintf("comics/%s/%s", code, file),
+		}
 		for _, k := range keys {
 			if proxyObject(r, m, k, "image/jpeg", "private, max-age=120") {
 				return
@@ -262,6 +267,18 @@ func rewriteM3u8(body, query string, previewSec int) string {
 		res = strings.TrimRight(res, "\n") + "\n#EXT-X-ENDLIST\n"
 	}
 	return res
+}
+
+func resolveHlsKey(ctx context.Context, m *store.Minio, code, file string) string {
+	mediaKey := fmt.Sprintf("media/hls/%s/%s", code, file)
+	if m.Exists(ctx, mediaKey) {
+		return mediaKey
+	}
+	cartoonKey := fmt.Sprintf("cartoon/hls/%s/%s", code, file)
+	if m.Exists(ctx, cartoonKey) {
+		return cartoonKey
+	}
+	return mediaKey
 }
 
 func isImageFile(file string) bool {

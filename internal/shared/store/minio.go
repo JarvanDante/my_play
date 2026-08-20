@@ -51,6 +51,12 @@ func Get(ctx context.Context) (*Minio, error) {
 	return inst, iErr
 }
 
+// Exists 判断对象是否存在。
+func (m *Minio) Exists(ctx context.Context, key string) bool {
+	_, err := m.client.StatObject(ctx, m.bucket, key, miniogo.StatObjectOptions{})
+	return err == nil
+}
+
 // Fetch 读取对象全文(用于 m3u8, 体积小)。
 func (m *Minio) Fetch(ctx context.Context, key string) ([]byte, error) {
 	obj, err := m.client.GetObject(ctx, m.bucket, key, miniogo.GetObjectOptions{})
