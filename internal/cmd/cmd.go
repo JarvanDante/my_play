@@ -10,6 +10,7 @@ import (
 
 	"my_play/internal/boot"
 	"my_play/internal/controller/play"
+	"my_play/internal/shared/aesbnc"
 	"my_play/internal/shared/policy"
 	"my_play/internal/shared/revoke"
 	"my_play/internal/shared/stats"
@@ -27,6 +28,7 @@ var Main = gcmd.Command{
 	Brief: "my_play 播放网关(HLS 验签/防盗链/试看/统计)",
 	Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
 		boot.InitNacosConfig(ctx)
+		aesbnc.SetKey(g.Cfg().MustGet(ctx, "image_aes.key", aesbnc.DefaultKey).String())
 		policy.StartSync(ctx)
 		revoke.StartSync(ctx)
 		stats.StartReporter(ctx)

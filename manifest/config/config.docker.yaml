@@ -16,6 +16,10 @@ minio:
   bucket: "my-media"
   use_ssl: false
 
+# 封面 AES-128-ECB, 必须 16 字节, 与 H5 VITE_AES_BNC_KEY 相同
+image_aes:
+  key: "525202f9149e061d"
+
 play:
   # 必须与 my_media 的 play_gateway.secret 一致
   secret: "dev-play-secret-change-me"
