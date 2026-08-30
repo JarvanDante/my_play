@@ -215,7 +215,9 @@ func proxyObject(r *ghttp.Request, m *store.Minio, key, fallbackCT, cache string
 func isBrowserUnreachable(u string) bool {
 	return strings.Contains(u, "host.docker.internal") ||
 		strings.Contains(u, "://minio:") ||
-		strings.Contains(u, "://minio.")
+		strings.Contains(u, "://minio.") ||
+		strings.Contains(u, "://127.0.0.1:") ||
+		strings.Contains(u, "://localhost:")
 }
 
 // rewriteM3u8 给每个 URI 行追加 token; previewSec>0 时按 EXTINF 累计时长截断(试看)。
