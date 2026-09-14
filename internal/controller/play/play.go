@@ -137,7 +137,7 @@ func Hls(r *ghttp.Request) {
 	}
 
 	// 封面/页图走网关代理: .bnc 下发密文给 H5 解密; .jpg 给后台 <img> 明文预览。
-	// 视频 media/hls/{code}/cover.bnc，抖音 video/hls/{code}/cover.bnc，动漫 cartoon/hls/{code}/cover.bnc，漫画 comics/{code}/cover.bnc。
+	// 视频 media/hls/{code}/cover.bnc，抖音 video/hls/{code}/cover.bnc，动漫 cartoon/hls/{code}/cover.bnc，漫画 comics/{code}/cover.bnc，小说 novels/{code}/cover.bnc。
 	if isImageFile(file) {
 		if !serveImage(r, m, code, file) {
 			r.Response.WriteStatus(http.StatusNotFound, "object not found")
@@ -310,6 +310,7 @@ func serveImage(r *ghttp.Request, m *store.Minio, code, file string) bool {
 		fmt.Sprintf("video/hls/%s/", code),
 		fmt.Sprintf("cartoon/hls/%s/", code),
 		fmt.Sprintf("comics/%s/", code),
+		fmt.Sprintf("novels/%s/", code),
 	}
 	for _, prefix := range prefixes {
 		for _, name := range imageCandidates(file) {
