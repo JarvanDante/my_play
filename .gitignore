@@ -17,3 +17,9 @@ temp/
 temp.yaml
 bin
 **/config/config.yaml_to_delete/
+
+# 构建产物与编译输出
+dist/
+*.exe
+/my_play
+/play
