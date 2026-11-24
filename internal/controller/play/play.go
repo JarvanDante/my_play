@@ -137,7 +137,7 @@ func Hls(r *ghttp.Request) {
 	}
 
 	// 封面/页图走网关代理: .bnc 下发密文给 H5 解密; .jpg 给后台 <img> 明文预览。
-	// 视频 media/hls/{code}/cover.bnc，抖音 video/hls/{code}/cover.bnc，动漫 cartoon/hls/{code}/cover.bnc，漫画 comics/{code}/cover.bnc，小说 novels/{code}/cover.bnc。
+	// 视频 media/hls/{code}/cover.bnc，抖音 video/hls/{code}/cover.bnc，动漫 cartoon/hls/{code}/cover.bnc，短剧 drama/hls/{code}/cover.bnc 或 drama/{code}/cover.bnc，漫画 comics/{code}/cover.bnc，小说 novels/{code}/cover.bnc。
 	if isImageFile(file) {
 		if !serveImage(r, m, code, file) {
 			r.Response.WriteStatus(http.StatusNotFound, "object not found")
@@ -265,7 +265,7 @@ func rewriteM3u8(body, query string, previewSec int) string {
 }
 
 func resolveHlsKey(ctx context.Context, m *store.Minio, code, file string) string {
-	for _, prefix := range []string{"media/hls/", "video/hls/", "cartoon/hls/"} {
+	for _, prefix := range []string{"media/hls/", "video/hls/", "cartoon/hls/", "drama/hls/"} {
 		key := prefix + code + "/" + file
 		if m.Exists(ctx, key) {
 			return key
@@ -309,6 +309,8 @@ func serveImage(r *ghttp.Request, m *store.Minio, code, file string) bool {
 		fmt.Sprintf("media/hls/%s/", code),
 		fmt.Sprintf("video/hls/%s/", code),
 		fmt.Sprintf("cartoon/hls/%s/", code),
+		fmt.Sprintf("drama/hls/%s/", code),
+		fmt.Sprintf("drama/%s/", code),
 		fmt.Sprintf("comics/%s/", code),
 		fmt.Sprintf("novels/%s/", code),
 	}
