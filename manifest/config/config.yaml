@@ -27,6 +27,8 @@ play:
   presign_expire_sec: 300
   # 分片回源模式: presign(默认,302预签名) | proxy(网关代理直出,隐藏源站) | cdn(302到CDN签名URL)
   serve_mode: "presign"
+  # 无用途字段(p)的旧签名放行截止 unix 秒，0=不放行；短剧资源始终不放行旧签名
+  legacy_sig_until: 0
   cdn:
     base_url: ""       # 形如 https://cdn.example.com (serve_mode=cdn 时必填)
     private_key: ""    # 阿里云 URL 鉴权 Type A 的鉴权 KEY

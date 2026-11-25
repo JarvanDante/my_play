@@ -57,7 +57,12 @@ func Healthz(r *ghttp.Request) {
 	r.Response.WriteJson(g.Map{"ok": true, "service": "my_play"})
 }
 
-// Hls 统一入口: GET /hls/:code/:file?e=&s=&sig=[&d=][&i=]
+// legacyAllowed 无用途字段的旧签名只在 play.legacy_sig_until(unix 秒)之前放行。
+func legacyAllowed(ctx context.Context) bool {
+	return time.Now().Unix() < g.Cfg().MustGet(ctx, "play.legacy_sig_until", 0).Int64()
+}
+
+// Hls 统一入口: GET /hls/:code/:file?e=&s=&sig=&p=[&d=][&i=]
 func Hls(r *ghttp.Request) {
 	ctx := r.Context()
 	code := r.Get("code").String()
@@ -68,6 +73,7 @@ func Hls(r *ghttp.Request) {
 	d := r.Get("d").Int()
 	ip := r.Get("i").String()
 	iat := r.Get("t").Int64()
+	purpose := r.Get("p").String()
 
 	if code == "" || !validRelPath(file) {
 		r.Response.WriteStatus(http.StatusBadRequest, "bad request")
@@ -78,8 +84,18 @@ func Hls(r *ghttp.Request) {
 		r.Response.WriteStatus(http.StatusInternalServerError, "play.secret 未配置")
 		return
 	}
-	if err := token.Verify(secs, code, site, e, d, ip, iat, sig); err != nil {
+	if err := token.Verify(secs, code, site, e, d, ip, iat, purpose, sig); err != nil {
 		r.Response.WriteStatus(http.StatusForbidden, err.Error())
+		return
+	}
+	// 用途必须与请求文件类型一致：封面签名不能取清单/分片，hls 签名也不能取图。
+	want := token.PurposeHls
+	if isImageFile(file) {
+		want = token.PurposeImg
+	}
+	legacy := purpose == ""
+	if legacy && !legacyAllowed(ctx) || !legacy && purpose != want {
+		r.Response.WriteStatus(http.StatusForbidden, "播放凭证用途不符")
 		return
 	}
 	// IP 绑定(token 内嵌了 ip 才校验)
@@ -110,6 +126,11 @@ func Hls(r *ghttp.Request) {
 		return
 	}
 	key := resolveHlsKey(ctx, m, code, file)
+	// 旧签名一律不放行短剧资源。
+	if legacy && !isImageFile(file) && strings.HasPrefix(key, "drama/") {
+		r.Response.WriteStatus(http.StatusForbidden, "播放凭证用途不符")
+		return
+	}
 
 	// 播放清单: 拉取并重写(可试看截断)
 	if strings.HasSuffix(file, ".m3u8") {
@@ -120,6 +141,9 @@ func Hls(r *ghttp.Request) {
 			return
 		}
 		q := fmt.Sprintf("e=%d&s=%s&t=%d&sig=%s", e, site, iat, sig)
+		if purpose != "" {
+			q += "&p=" + purpose
+		}
 		if d > 0 {
 			q += fmt.Sprintf("&d=%d", d)
 		}
@@ -139,7 +163,7 @@ func Hls(r *ghttp.Request) {
 	// 封面/页图走网关代理: .bnc 下发密文给 H5 解密; .jpg 给后台 <img> 明文预览。
 	// 视频 media/hls/{code}/cover.bnc，抖音 video/hls/{code}/cover.bnc，动漫 cartoon/hls/{code}/cover.bnc，短剧 drama/hls/{code}/cover.bnc 或 drama/{code}/cover.bnc，漫画 comics/{code}/cover.bnc，小说 novels/{code}/cover.bnc。
 	if isImageFile(file) {
-		if !serveImage(r, m, code, file) {
+		if !serveImage(r, m, code, file, !legacy) {
 			r.Response.WriteStatus(http.StatusNotFound, "object not found")
 		}
 		return
@@ -302,7 +326,7 @@ func imageCandidates(file string) []string {
 	return out
 }
 
-func serveImage(r *ghttp.Request, m *store.Minio, code, file string) bool {
+func serveImage(r *ghttp.Request, m *store.Minio, code, file string, allowDrama bool) bool {
 	ctx := r.Context()
 	wantCipher := aesbnc.IsEncryptedName(file)
 	prefixes := []string{
@@ -315,6 +339,9 @@ func serveImage(r *ghttp.Request, m *store.Minio, code, file string) bool {
 		fmt.Sprintf("novels/%s/", code),
 	}
 	for _, prefix := range prefixes {
+		if !allowDrama && strings.HasPrefix(prefix, "drama/") {
+			continue
+		}
 		for _, name := range imageCandidates(file) {
 			key := prefix + name
 			if !m.Exists(ctx, key) {
