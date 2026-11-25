@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -169,6 +170,12 @@ func Hls(r *ghttp.Request) {
 		return
 	}
 
+	// 试看签名只能取截断后清单里列出的分片。
+	if d > 0 && !inPreview(ctx, m, strings.TrimSuffix(key, file), file, d) {
+		r.Response.WriteStatus(http.StatusForbidden, "超出试看范围")
+		return
+	}
+
 	// 分片回源: 按 serve_mode 选择 presign(302预签名) / proxy(代理直出) / cdn(302到CDN签名URL)
 	stats.AddSeg(site, code)
 	r.Response.Header().Set("Cache-Control", "no-store")
@@ -286,6 +293,68 @@ func rewriteM3u8(body, query string, previewSec int) string {
 		res = strings.TrimRight(res, "\n") + "\n#EXT-X-ENDLIST\n"
 	}
 	return res
+}
+
+// playlistURIs 取清单里的相对 URI 行(去掉查询串), 试看时只取截断范围内的。
+func playlistURIs(body string, previewSec int) []string {
+	var out []string
+	var cum float64
+	for _, line := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			if previewSec > 0 && strings.HasPrefix(t, "#EXTINF:") {
+				dur := parseExtinf(t)
+				if cum+dur > float64(previewSec) && cum > 0 {
+					break
+				}
+				cum += dur
+			}
+			continue
+		}
+		if strings.HasPrefix(t, "http://") || strings.HasPrefix(t, "https://") {
+			continue
+		}
+		if i := strings.IndexAny(t, "?#"); i >= 0 {
+			t = t[:i]
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// inPreview 判断分片是否在试看截断范围内(与 rewriteM3u8 的截断规则一致)。
+func inPreview(ctx context.Context, m *store.Minio, root, file string, previewSec int) bool {
+	dir := path.Dir(file)
+	var lists []string
+	for _, top := range []string{"master.m3u8", "index.m3u8"} {
+		raw, err := m.Fetch(ctx, root+top)
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(string(raw), "#EXT-X-STREAM-INF") {
+			if dir == "." {
+				lists = append(lists, top)
+			}
+			continue
+		}
+		for _, u := range playlistURIs(string(raw), 0) {
+			if strings.HasSuffix(u, ".m3u8") && path.Dir(u) == dir {
+				lists = append(lists, u)
+			}
+		}
+	}
+	for _, l := range lists {
+		raw, err := m.Fetch(ctx, root+l)
+		if err != nil {
+			continue
+		}
+		for _, u := range playlistURIs(string(raw), previewSec) {
+			if path.Join(path.Dir(l), u) == file {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resolveHlsKey(ctx context.Context, m *store.Minio, code, file string) string {
